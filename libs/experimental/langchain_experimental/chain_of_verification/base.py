@@ -24,7 +24,7 @@ from langchain_experimental.chain_of_verification.prompt import (
 
 class PlanVerificationsOutputModel(BaseModel):
     query: str = Field(description="The user's query")
-    base_response: str = Field(description="The response to the user's query")
+    baseline_response: str = Field(description="The response to the user's query")
     facts_and_verification_questions: dict[str, str] = Field(
         description="Facts (as the dictionary keys) extracted from the response and verification questions related to the query (as the dictionary values)"
     )
