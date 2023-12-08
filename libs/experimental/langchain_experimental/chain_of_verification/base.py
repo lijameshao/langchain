@@ -1,23 +1,21 @@
 """Chain of verification https://arxiv.org/abs/2309.11495"""
 from __future__ import annotations
 
-from operator import itemgetter
 from typing import Any, Dict, List, Optional
 
 from langchain.callbacks.manager import CallbackManagerForChainRun
 from langchain.chains.base import Chain
-from langchain.chains.llm import LLMChain
-from langchain.chains.sequential import SequentialChain
+from langchain.output_parsers import PydanticOutputParser
 from langchain.prompts import PromptTemplate
-from langchain.pydantic_v1 import BaseModel, Field, Extra
+from langchain.pydantic_v1 import BaseModel, Extra, Field
 from langchain.schema import StrOutputParser
 from langchain.schema.language_model import BaseLanguageModel
-from langchain.output_parsers import PydanticOutputParser
-from langchain.schema.runnable import RunnableMap, RunnablePassthrough
+from langchain.schema.runnable import Runnable, RunnablePassthrough
+
 from langchain_experimental.chain_of_verification.prompt import (
     BASELINE_RESPONSE_PROMPT,
-    PLAN_VERIFICATIONS_PROMPT,
     EXECUTE_VERIFICATIONS_PROMPT,
+    PLAN_VERIFICATIONS_PROMPT,
     REVISED_RESPONSE_PROMPT,
 )
 
@@ -26,7 +24,8 @@ class PlanVerificationsOutputModel(BaseModel):
     query: str = Field(description="The user's query")
     baseline_response: str = Field(description="The response to the user's query")
     facts_and_verification_questions: dict[str, str] = Field(
-        description="Facts (as the dictionary keys) extracted from the response and verification questions related to the query (as the dictionary values)"
+        description="Facts (as the dictionary keys) extracted from the response and"
+        " verification questions related to the query (as the dictionary values)"
     )
 
 
@@ -40,16 +39,21 @@ class CoVeChain(Chain):
             from langchain_experimental.chain_of_verification import CoVeChain
             llm = OpenAI(temperature=0)
             cove_chain = CoVeChain.from_llm(llm)
+            cove_chain(
+                {"query": "Name some politicians who were born in New York?"}
+            )
+
+            # Using runnable invoke() method and callbacks
+            from langchain.callbacks import StdOutCallbackHandler
+
+            handler = StdOutCallbackHandler()
+            cove_chain.invoke(
+                {"query": "Name some politicians who were born in New York?"},
+                {"callbacks": [handler]},
+            )
     """
 
-    cove_chain: SequentialChain
-
-    llm: Optional[BaseLanguageModel] = None
-    baseline_response_prompt: PromptTemplate = BASELINE_RESPONSE_PROMPT
-    plan_verifications_prompt: PromptTemplate = PLAN_VERIFICATIONS_PROMPT
-    plan_verifications_output_model: BaseModel = PlanVerificationsOutputModel
-    execute_verifications_prompt: PromptTemplate = EXECUTE_VERIFICATIONS_PROMPT
-    revised_response_prompt: PromptTemplate = REVISED_RESPONSE_PROMPT
+    cove_chain: Runnable
     input_key: str = "query"  #: :meta private:
     output_key: str = "result"  #: :meta private:
 
@@ -79,14 +83,20 @@ class CoVeChain(Chain):
         self,
         inputs: Dict[str, Any],
         run_manager: Optional[CallbackManagerForChainRun] = None,
-    ) -> Dict[str, str]:
-        _run_manager = run_manager or CallbackManagerForChainRun.get_noop_manager()
+    ) -> Dict[str, Any]:
+        if run_manager:
+            run_manager.on_text("Running Chain of Verification...\n")
         query = inputs[self.input_key]
+        output = self.cove_chain.invoke(query)
 
-        output = self.cove_chain.invoke(
-            {"query": query}, callbacks=_run_manager.get_child()
-        )
-        return {self.output_key: output["result"]}
+        # Log intermediate steps
+        # TODO: find a way to log during the execution of the chain
+        if run_manager:
+            run_manager.on_text(f"Baseline response: {output['baseline_response']}\n\n")
+            run_manager.on_text(
+                f"Verification questions/answers: \n{output['verified_responses']}\n\n"
+            )
+        return {self.output_key: output["revised_response"]}
 
     @property
     def _chain_type(self) -> str:
@@ -105,44 +115,55 @@ class CoVeChain(Chain):
         plan_verifications_output_parser = PydanticOutputParser(
             pydantic_object=PlanVerificationsOutputModel
         )
+        # Answer the user's query
+        baseline_response_chain = (
+            baseline_response_prompt | llm | StrOutputParser()
+        ).with_config(run_name="Baseline Response")
 
-        baseline_response = baseline_response_prompt | llm | StrOutputParser()
-        plan_verifcations_response: PlanVerificationsOutputModel = (
-            {"baseline_response": baseline_response}
-            | plan_verifications_prompt
+        # Generate verification questions
+        plan_verifications_response = (
+            plan_verifications_prompt
             | llm
             | plan_verifications_output_parser
-        )
-        verification_questions = list(
-            plan_verifcations_response.facts_and_verification_questions.values()
-        )
-        verify_chain = (
-            {"verification_question": itemgetter("verification_question")}
-            | execute_verifications_prompt
-            | llm
-            | StrOutputParser()
-        )
+            | (lambda output: list(output.facts_and_verification_questions.values()))
+        ).with_config(run_name="Plan Verifications")
 
-        verify_results_str = ""
-        for i in range(len(verification_questions)):
-            question = verification_questions[i]
-            answer = verify_chain.invoke({"verification_question": question})
-            answer = answer.lstrip("\n")
-            verify_results_str += f"Question: {question}\nAnswer: {answer}\n\n"
+        # Execute verification questions in parallel
+        verification_chain = (
+            (
+                lambda x: [
+                    {"verification_question": question}
+                    for question in x["verification_questions"]
+                ]
+            )
+            | (execute_verifications_prompt | llm | StrOutputParser()).map()
+        ).with_config(run_name="Execute Verifications in parallel")
 
-        map_ = RunnableMap(query=RunnablePassthrough())
+        # Based on the verification questions, revise the final response
         revise_response_chain = (
-            {
-                "query": map_,
-                "baseline_response": baseline_response,
-                "verified_responses": verify_results_str,
-            }
-            | revised_response_prompt
-            | llm
-            | StrOutputParser()
-        )
+            revised_response_prompt | llm | StrOutputParser()
+        ).with_config(run_name="Revise Response")
 
-        cove_chain = revise_response_chain
+        cove_chain = (
+            {"query": RunnablePassthrough()}
+            | RunnablePassthrough.assign(baseline_response=baseline_response_chain)
+            | RunnablePassthrough.assign(
+                verification_questions=plan_verifications_response
+            )
+            | RunnablePassthrough.assign(verification_responses=verification_chain)
+            | RunnablePassthrough.assign(
+                verified_responses=lambda x: "\n\n".join(
+                    [
+                        f"Question: {question}\nAnswer: {answer}\n\n"
+                        for question, answer in zip(
+                            x["verification_questions"],
+                            x["verification_responses"],
+                        )
+                    ]
+                )
+            )
+            | RunnablePassthrough.assign(revised_response=revise_response_chain)
+        )
         return cls(
             cove_chain=cove_chain,
             **kwargs,
