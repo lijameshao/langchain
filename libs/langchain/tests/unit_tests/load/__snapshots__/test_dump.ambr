@@ -30,10 +30,9 @@
     "lc": 1,
     "type": "constructor",
     "id": [
-      "tests",
-      "unit_tests",
-      "load",
-      "test_dump",
+      "my",
+      "special",
+      "namespace",
       "SpecialPerson"
     ],
     "kwargs": {
@@ -97,7 +96,7 @@
         "lc": 1,
         "type": "constructor",
         "id": [
-          "langchain_core",
+          "langchain",
           "prompts",
           "prompt",
           "PromptTemplate"
@@ -152,7 +151,7 @@
         "lc": 1,
         "type": "constructor",
         "id": [
-          "langchain_core",
+          "langchain",
           "prompts",
           "chat",
           "ChatPromptTemplate"
@@ -166,7 +165,7 @@
               "lc": 1,
               "type": "constructor",
               "id": [
-                "langchain_core",
+                "langchain",
                 "prompts",
                 "chat",
                 "HumanMessagePromptTemplate"
@@ -176,7 +175,7 @@
                   "lc": 1,
                   "type": "constructor",
                   "id": [
-                    "langchain_core",
+                    "langchain",
                     "prompts",
                     "prompt",
                     "PromptTemplate"
@@ -236,7 +235,7 @@
         "lc": 1,
         "type": "constructor",
         "id": [
-          "langchain_core",
+          "langchain",
           "prompts",
           "prompt",
           "PromptTemplate"
