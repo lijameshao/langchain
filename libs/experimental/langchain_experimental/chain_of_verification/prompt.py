@@ -22,7 +22,7 @@ Example query: "What is the Mexican-American War?"
 Example baseline response: “The Mexican-American War was an armed conflict between the United States and Mexico from 1846 to 1848”
 Example verification question: “When did the Mexican American war start and end?”
 
-Example query: "List some notable computer scientist and their year of birth"
+Example query: "List some notable computer scientist and their place of birth"
 Example baseline response: “Alan Turing - Born in Maida Vale, London, United Kingdom.
 Ada Lovelace - Born in London, United Kingdom.
 Grace Hopper - Born in New York City, New York, USA.
